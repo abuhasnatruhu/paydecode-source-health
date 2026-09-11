@@ -1,0 +1,145 @@
+name: Minimum-wage data freshness
+
+# Runner repository for paydecode.com's official-source health check. This public repository holds
+# no site content: it checks out the private source repository at an exact commit (read-only token in
+# the PAYDECODE_SOURCE_TOKEN secret) and runs that commit's own monitor script. The uploaded
+# artifact is validated by scripts/lib/trusted-ci-source-report.mjs in the source repository
+# (runner mode), which binds the release SHA and branch through the provenance file written here.
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Full 40-hex commit SHA of abuhasnatruhu/paydecode.com to check
+        required: true
+        type: string
+      source_ref:
+        description: Branch of abuhasnatruhu/paydecode.com that contains that commit
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: minimum-wage-freshness-${{ inputs.source_sha }}
+  cancel-in-progress: false
+
+env:
+  SOURCE_REPOSITORY: abuhasnatruhu/paydecode.com
+
+jobs:
+  data-freshness:
+    name: Review dates and effective-rate windows
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      as_of: ${{ steps.utc-date.outputs.as_of }}
+    steps:
+      - name: Validate inputs
+        shell: bash
+        run: |
+          [[ "${{ inputs.source_sha }}" =~ ^[0-9a-f]{40}$ ]] || { echo "source_sha must be a 40-hex commit"; exit 1; }
+          [[ "${{ inputs.source_ref }}" =~ ^[A-Za-z0-9._/-]+$ ]] || { echo "source_ref must be a branch name"; exit 1; }
+      - name: Check out source repository at the requested commit
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.SOURCE_REPOSITORY }}
+          ref: ${{ inputs.source_sha }}
+          token: ${{ secrets.PAYDECODE_SOURCE_TOKEN }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify the checkout matches the request
+        shell: bash
+        run: |
+          head="$(git rev-parse HEAD)"
+          [[ "$head" == "${{ inputs.source_sha }}" ]] || { echo "checked out $head, expected ${{ inputs.source_sha }}"; exit 1; }
+          git branch -r --contains "$head" | grep -qx "  origin/${{ inputs.source_ref }}" || { echo "${{ inputs.source_ref }} does not contain $head"; exit 1; }
+      - name: Set current UTC review date
+        id: utc-date
+        shell: bash
+        run: |
+          as_of="$(date -u +%F)"
+          echo "as_of=$as_of" >> "$GITHUB_OUTPUT"
+          echo "PAYDECODE_BUILD_AS_OF=$as_of" >> "$GITHUB_ENV"
+          echo "MIN_WAGE_AS_OF=$as_of" >> "$GITHUB_ENV"
+      - name: Use Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Check state, local, and territory wage freshness
+        run: npm run qa:minimum-wage-monitor
+
+  source-health:
+    name: Official-source link health
+    runs-on: ubuntu-latest
+    needs: data-freshness
+    if: ${{ always() }}
+    timeout-minutes: 45
+    steps:
+      - name: Check out source repository at the requested commit
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.SOURCE_REPOSITORY }}
+          ref: ${{ inputs.source_sha }}
+          token: ${{ secrets.PAYDECODE_SOURCE_TOKEN }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify the checkout matches the request
+        shell: bash
+        run: |
+          head="$(git rev-parse HEAD)"
+          [[ "$head" == "${{ inputs.source_sha }}" ]] || { echo "checked out $head, expected ${{ inputs.source_sha }}"; exit 1; }
+          git branch -r --contains "$head" | grep -qx "  origin/${{ inputs.source_ref }}" || { echo "${{ inputs.source_ref }} does not contain $head"; exit 1; }
+      - name: Set current UTC review date
+        shell: bash
+        run: |
+          echo "PAYDECODE_BUILD_AS_OF=${{ needs.data-freshness.outputs.as_of }}" >> "$GITHUB_ENV"
+          echo "MIN_WAGE_AS_OF=${{ needs.data-freshness.outputs.as_of }}" >> "$GITHUB_ENV"
+      - name: Use Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Check official source URLs
+        shell: bash
+        run: |
+          monitor_status=0
+          bash scripts/use-node22.sh scripts/monitor-minimum-wage-data.mjs --check-sources --json > minimum-wage-source-health.json || monitor_status=$?
+          report_sha256="$(sha256sum minimum-wage-source-health.json | awk '{print $1}')"
+          {
+            echo "git_sha=$(git rev-parse HEAD)"
+            echo "as_of=$MIN_WAGE_AS_OF"
+            echo "created_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "monitor_exit_status=$monitor_status"
+            echo "report_sha256=$report_sha256"
+            echo "github_run_id=$GITHUB_RUN_ID"
+            echo "github_run_attempt=$GITHUB_RUN_ATTEMPT"
+            echo "runner_repository=$GITHUB_REPOSITORY"
+            echo "source_repository=$SOURCE_REPOSITORY"
+            echo "source_ref=${{ inputs.source_ref }}"
+          } > minimum-wage-source-health.provenance
+          exit "$monitor_status"
+      - name: Publish source-health summary
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          echo '## Minimum-wage official-source health' >> "$GITHUB_STEP_SUMMARY"
+          if [ -f minimum-wage-source-health.provenance ]; then
+            echo '```text' >> "$GITHUB_STEP_SUMMARY"; cat minimum-wage-source-health.provenance >> "$GITHUB_STEP_SUMMARY"; echo '```' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload source-health report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: minimum-wage-source-health
+          path: |
+            minimum-wage-source-health.json
+            minimum-wage-source-health.provenance
+          if-no-files-found: warn
+          retention-days: 30
