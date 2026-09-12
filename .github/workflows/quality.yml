@@ -69,4 +69,5 @@ jobs:
         run: npm run cf:deploy:dry-run
       - name: Summarise
         if: ${{ always() }}
-        run: echo "Quality chain for ${{ env.SOURCE_REPOSITORY }}@${{ steps.resolve.outputs.source_sha }} (${{ steps.resolve.outputs.source_ref }}): ${{ job.status }}" >> "$GITHUB_STEP_SUMMARY"
+        run: |
+          echo "Quality chain for ${{ env.SOURCE_REPOSITORY }}@${{ steps.resolve.outputs.source_sha }} (${{ steps.resolve.outputs.source_ref }}) - ${{ job.status }}" >> "$GITHUB_STEP_SUMMARY"
