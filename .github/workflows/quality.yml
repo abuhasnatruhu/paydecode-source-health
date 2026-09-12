@@ -56,11 +56,14 @@ jobs:
         run: |
           echo "PAYDECODE_BUILD_AS_OF=$(date -u +%F)" >> "$GITHUB_ENV"
           echo "MIN_WAGE_AS_OF=$(date -u +%F)" >> "$GITHUB_ENV"
-      - name: Use Node.js 22
+      # The payroll baseline reproduction pins Node 24.14.0 exactly (scripts/generate-payroll-current-baseline.mjs).
+      - name: Use Node.js 24.14.0
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '24.14.0'
           cache: npm
+      - name: Point the repository's node wrapper at this runtime
+        run: echo "NODE22_BIN=$(command -v node)" >> "$GITHUB_ENV"
       - name: Install locked dependencies
         run: npm ci
       - name: Secrets scan
