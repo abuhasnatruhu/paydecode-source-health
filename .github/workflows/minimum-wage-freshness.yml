@@ -46,7 +46,7 @@ jobs:
         with:
           repository: ${{ env.SOURCE_REPOSITORY }}
           ref: ${{ inputs.source_sha }}
-          token: ${{ secrets.PAYDECODE_SOURCE_TOKEN }}
+          token: ${{ secrets.PAYDECODE_SOURCE_TOKEN1 }}
           fetch-depth: 0
           persist-credentials: false
       - name: Verify the checkout matches the request
@@ -85,7 +85,7 @@ jobs:
         with:
           repository: ${{ env.SOURCE_REPOSITORY }}
           ref: ${{ inputs.source_sha }}
-          token: ${{ secrets.PAYDECODE_SOURCE_TOKEN }}
+          token: ${{ secrets.PAYDECODE_SOURCE_TOKEN1 }}
           fetch-depth: 0
           persist-credentials: false
       - name: Verify the checkout matches the request
