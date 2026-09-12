@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       source_ref:
-        description: Branch of abuhasnatruhu/paydecode.com to check (default: PAYDECODE_SOURCE_REF variable)
+        description: "Branch of abuhasnatruhu/paydecode.com to check (default: the PAYDECODE_SOURCE_REF variable)"
         required: false
         type: string
   schedule:

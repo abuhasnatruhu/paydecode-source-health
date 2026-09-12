@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
     inputs:
       source_ref:
-        description: Branch of abuhasnatruhu/paydecode.com to capture against (default: PAYDECODE_SOURCE_REF variable)
+        description: "Branch of abuhasnatruhu/paydecode.com to capture against (default: the PAYDECODE_SOURCE_REF variable)"
         required: false
         type: string
       captures:
