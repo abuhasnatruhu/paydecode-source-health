@@ -1,0 +1,72 @@
+name: Quality chain
+
+# Runs paydecode.com's full pre-deploy quality chain (npm run cf:deploy:dry-run) on the head of the
+# release branch, nightly and on dispatch. This replaces the billed workflow in the private source
+# repository; only the checkout token is needed and no secrets reach the site build.
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Branch of abuhasnatruhu/paydecode.com to check (default: PAYDECODE_SOURCE_REF variable)
+        required: false
+        type: string
+  schedule:
+    - cron: '0 2 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-${{ inputs.source_ref || 'scheduled' }}
+  cancel-in-progress: true
+
+env:
+  SOURCE_REPOSITORY: abuhasnatruhu/paydecode.com
+
+jobs:
+  verify:
+    name: Full dry-run quality chain
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Resolve the branch head
+        id: resolve
+        shell: bash
+        env:
+          INPUT_REF: ${{ inputs.source_ref }}
+          DEFAULT_REF: ${{ vars.PAYDECODE_SOURCE_REF || 'main' }}
+          SOURCE_TOKEN: ${{ secrets.PAYDECODE_SOURCE_TOKEN1 }}
+        run: |
+          ref="${INPUT_REF:-$DEFAULT_REF}"
+          [[ "$ref" =~ ^[A-Za-z0-9._/-]+$ ]] || { echo "branch name invalid"; exit 1; }
+          sha="$(git ls-remote "https://x-access-token:${SOURCE_TOKEN}@github.com/${SOURCE_REPOSITORY}.git" "refs/heads/${ref}" | cut -f1)"
+          [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "could not resolve the head of ${ref}"; exit 1; }
+          echo "source_sha=$sha" >> "$GITHUB_OUTPUT"; echo "source_ref=$ref" >> "$GITHUB_OUTPUT"
+      - name: Check out the source repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.SOURCE_REPOSITORY }}
+          ref: ${{ steps.resolve.outputs.source_sha }}
+          token: ${{ secrets.PAYDECODE_SOURCE_TOKEN1 }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set current UTC build date
+        shell: bash
+        run: |
+          echo "PAYDECODE_BUILD_AS_OF=$(date -u +%F)" >> "$GITHUB_ENV"
+          echo "MIN_WAGE_AS_OF=$(date -u +%F)" >> "$GITHUB_ENV"
+      - name: Use Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Secrets scan
+        run: npm run qa:no-secrets
+      - name: Full pre-deploy dry-run
+        run: npm run cf:deploy:dry-run
+      - name: Summarise
+        if: ${{ always() }}
+        run: echo "Quality chain for ${{ env.SOURCE_REPOSITORY }}@${{ steps.resolve.outputs.source_sha }} (${{ steps.resolve.outputs.source_ref }}): ${{ job.status }}" >> "$GITHUB_STEP_SUMMARY"

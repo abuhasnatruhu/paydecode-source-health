@@ -1,0 +1,143 @@
+name: Official-source captures
+
+# Produces capture receipts for paydecode.com's official sources inside this public runner, where
+# GitHub Actions is unmetered, and signs each receipt with the PAYDECODE_RECEIPT_SIGNING_KEY secret.
+# The source repository's qa:receipt-provenance gate accepts only receipts that carry a valid runner
+# signature, so evidence produced anywhere else cannot enter a release. Weekly on Tuesday the run
+# captures every source whose review deadline falls within the next ten days; on dispatch it
+# captures the lines you pass in. Receipts are uploaded as an artifact; when the optional
+# PAYDECODE_SOURCE_WRITE_TOKEN secret exists a pull request is opened on the source repository.
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Branch of abuhasnatruhu/paydecode.com to capture against (default: PAYDECODE_SOURCE_REF variable)
+        required: false
+        type: string
+      captures:
+        description: "Optional lines `name<TAB>url` (one per line); leave empty to capture everything due within due_within_days"
+        required: false
+        type: string
+      due_within_days:
+        description: Capture sources whose review deadline is within this many days
+        required: false
+        default: '10'
+        type: string
+  schedule:
+    # Tuesday 05:00 UTC, three days before the usual Friday review windows.
+    - cron: '0 5 * * 2'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: source-captures-${{ github.run_id }}
+  cancel-in-progress: false
+
+env:
+  SOURCE_REPOSITORY: abuhasnatruhu/paydecode.com
+
+jobs:
+  capture:
+    name: Capture, sign and publish receipts
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Resolve the branch head
+        id: resolve
+        shell: bash
+        env:
+          INPUT_REF: ${{ inputs.source_ref }}
+          DEFAULT_REF: ${{ vars.PAYDECODE_SOURCE_REF || 'main' }}
+          SOURCE_TOKEN: ${{ secrets.PAYDECODE_SOURCE_TOKEN1 }}
+        run: |
+          ref="${INPUT_REF:-$DEFAULT_REF}"
+          [[ "$ref" =~ ^[A-Za-z0-9._/-]+$ ]] || { echo "branch name invalid"; exit 1; }
+          sha="$(git ls-remote "https://x-access-token:${SOURCE_TOKEN}@github.com/${SOURCE_REPOSITORY}.git" "refs/heads/${ref}" | cut -f1)"
+          [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "could not resolve the head of ${ref}"; exit 1; }
+          echo "source_sha=$sha" >> "$GITHUB_OUTPUT"; echo "source_ref=$ref" >> "$GITHUB_OUTPUT"
+          echo "capture_dir=research/source-captures/$(date -u +%F)-run${GITHUB_RUN_ID}" >> "$GITHUB_OUTPUT"
+      - name: Check out the source repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.SOURCE_REPOSITORY }}
+          ref: ${{ steps.resolve.outputs.source_sha }}
+          token: ${{ secrets.PAYDECODE_SOURCE_TOKEN1 }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Use Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Build the capture list
+        shell: bash
+        env:
+          CAPTURES: ${{ inputs.captures }}
+          DUE_WITHIN_DAYS: ${{ inputs.due_within_days || '10' }}
+          MIN_WAGE_AS_OF: ${{ steps.resolve.outputs.as_of }}
+        run: |
+          export PAYDECODE_BUILD_AS_OF="$(date -u +%F)" MIN_WAGE_AS_OF="$(date -u +%F)"
+          if [[ -n "$CAPTURES" ]]; then printf '%s\n' "$CAPTURES" > capture-list.tsv
+          else node scripts/list-due-source-captures.mjs "$DUE_WITHIN_DAYS" > capture-list.tsv; fi
+          echo "$(wc -l < capture-list.tsv) capture line(s)"; cat capture-list.tsv
+      - name: Capture every listed source
+        id: capture
+        shell: bash
+        continue-on-error: true
+        run: node scripts/capture-source-batch.mjs capture-list.tsv "${{ steps.resolve.outputs.capture_dir }}"
+      - name: Sign the receipts with the runner key
+        id: sign
+        shell: bash
+        env:
+          PAYDECODE_RECEIPT_SIGNING_KEY: ${{ secrets.PAYDECODE_RECEIPT_SIGNING_KEY }}
+          PAYDECODE_SOURCE_SHA: ${{ steps.resolve.outputs.source_sha }}
+        run: |
+          if [[ -z "$PAYDECODE_RECEIPT_SIGNING_KEY" ]]; then
+            echo "::warning::PAYDECODE_RECEIPT_SIGNING_KEY is not set; receipts are unsigned and cannot pass qa:receipt-provenance."
+            echo "signed=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          node scripts/sign-source-receipts.mjs "${{ steps.resolve.outputs.capture_dir }}"
+          echo "signed=true" >> "$GITHUB_OUTPUT"
+      - name: Verify the signed receipts the way the release gate will
+        if: ${{ steps.sign.outputs.signed == 'true' }}
+        run: node scripts/qa-receipt-provenance.mjs
+      - name: Summarise
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          {
+            echo "## Official-source captures ($(date -u +%F), source ${{ steps.resolve.outputs.source_sha }})"
+            echo "signed: ${{ steps.sign.outputs.signed }}"
+            echo '```json'; cat "${{ steps.resolve.outputs.capture_dir }}/capture-summary.json" 2>/dev/null || echo '{}'; echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload receipts
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: source-captures-${{ github.run_id }}
+          path: ${{ steps.resolve.outputs.capture_dir }}
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Open a pull request on the source repository
+        if: ${{ steps.sign.outputs.signed == 'true' && env.WRITE_TOKEN != '' }}
+        shell: bash
+        env:
+          WRITE_TOKEN: ${{ secrets.PAYDECODE_SOURCE_WRITE_TOKEN }}
+          GH_TOKEN: ${{ secrets.PAYDECODE_SOURCE_WRITE_TOKEN }}
+          CAPTURE_DIR: ${{ steps.resolve.outputs.capture_dir }}
+          SOURCE_REF: ${{ steps.resolve.outputs.source_ref }}
+        run: |
+          branch="runner/source-captures-$(date -u +%F)-${GITHUB_RUN_ID}"
+          git config user.name "paydecode-source-health runner"; git config user.email "runner@users.noreply.github.com"
+          git checkout -b "$branch"; git add "$CAPTURE_DIR"
+          git commit -m "Runner-signed official-source captures $(date -u +%F) (run ${GITHUB_RUN_ID})"
+          git push "https://x-access-token:${WRITE_TOKEN}@github.com/${SOURCE_REPOSITORY}.git" "$branch"
+          gh pr create --repo "$SOURCE_REPOSITORY" --base "$SOURCE_REF" --head "$branch" --title "Runner-signed source captures $(date -u +%F)" --body "Receipts produced and signed by ${GITHUB_REPOSITORY} run ${GITHUB_RUN_ID}. Review the capture summary, then bind the receipts in the renewal record; nothing here changes site content by itself."
+      - name: Fail the run if any capture failed
+        if: ${{ steps.capture.outcome == 'failure' }}
+        run: |
+          echo "One or more captures failed (see capture-summary.json); the successful receipts were still uploaded."; exit 1
