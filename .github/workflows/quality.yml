@@ -64,6 +64,8 @@ jobs:
           cache: npm
       - name: Point the repository's node wrapper at this runtime
         run: echo "NODE22_BIN=$(command -v node)" >> "$GITHUB_ENV"
+      - name: Install pdftotext (retained PDF evidence is verified on its extracted text)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq poppler-utils
       - name: Install locked dependencies
         run: npm ci
       - name: Secrets scan
