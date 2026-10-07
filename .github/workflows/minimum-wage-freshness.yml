@@ -101,6 +101,8 @@ jobs:
           cache: npm
       - name: Install locked dependencies
         run: npm ci
+      - name: Install pdftotext for retained PDF evidence verification
+        run: sudo apt-get update && sudo apt-get install -y poppler-utils
       - name: Check state, local, and territory wage freshness
         run: npm run qa:minimum-wage-monitor
 
@@ -137,6 +139,8 @@ jobs:
           cache: npm
       - name: Install locked dependencies
         run: npm ci
+      - name: Install pdftotext for retained PDF evidence verification
+        run: sudo apt-get update && sudo apt-get install -y poppler-utils
       - name: Check official source URLs
         shell: bash
         run: |
