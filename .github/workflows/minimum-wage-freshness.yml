@@ -102,7 +102,38 @@ jobs:
       - name: Install locked dependencies
         run: npm ci
       - name: Install pdftotext for retained PDF evidence verification
-        run: sudo apt-get update && sudo apt-get install -y poppler-utils
+        shell: bash
+        run: |
+          set -euo pipefail
+          verify_pdftotext() {
+            local binary owner integrity package_version version_output version_line
+            binary="$(command -v pdftotext)" || return 1
+            [[ "$binary" == /usr/bin/pdftotext && -f "$binary" && ! -L "$binary" && -x "$binary" ]] || return 1
+            [[ "$(stat -c '%u:%g:%a' "$binary")" == '0:0:755' ]] || return 1
+            owner="$(dpkg-query -S "$binary")" || return 1
+            [[ "$owner" =~ ^poppler-utils(:[a-z0-9-]+)?:[[:space:]]/usr/bin/pdftotext$ ]] || return 1
+            [[ "$(dpkg-query -W -f='${Status}' poppler-utils)" == 'install ok installed' ]] || return 1
+            integrity="$(dpkg --verify poppler-utils)" || return 1
+            [[ -z "$integrity" ]] || return 1
+            package_version="$(dpkg-query -W -f='${Version}' poppler-utils)" || return 1
+            [[ -n "$package_version" ]] || return 1
+            version_output="$(timeout --kill-after=5s 10s "$binary" -v 2>&1)" || return 1
+            version_line="${version_output%%$'\n'*}"
+            [[ "$version_line" =~ ^pdftotext[[:space:]]version[[:space:]][0-9]+(\.[0-9]+){1,2}$ ]] || return 1
+            echo "Verified system pdftotext (poppler-utils ${package_version})"
+          }
+          if ! verify_pdftotext; then
+            # Change only the known Azure HTTP archive URI; suites and signing keys stay intact.
+            for apt_source in /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources; do
+              if [[ -f "$apt_source" && ! -L "$apt_source" ]]; then
+                sudo sed -E -i -e ':ubuntu_uri' -e 's#(^|[[:space:]])http://azure\.archive\.ubuntu\.com/ubuntu(/?)([[:space:]]|$)#\1https://archive.ubuntu.com/ubuntu\2\3#g' -e 't ubuntu_uri' "$apt_source"
+              fi
+            done
+            apt_options=(-o Acquire::Retries=2 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 -o APT::Update::Error-Mode=any -o Acquire::AllowInsecureRepositories=false -o Acquire::AllowDowngradeToInsecureRepositories=false -o APT::Get::AllowUnauthenticated=false)
+            sudo timeout --kill-after=15s 180s apt-get "${apt_options[@]}" update
+            sudo timeout --kill-after=15s 180s apt-get "${apt_options[@]}" install -y poppler-utils
+            verify_pdftotext || { echo 'Trusted system pdftotext is unavailable; PDF checks cannot continue.'; exit 1; }
+          fi
       - name: Check state, local, and territory wage freshness
         run: npm run qa:minimum-wage-monitor
 
@@ -140,7 +171,38 @@ jobs:
       - name: Install locked dependencies
         run: npm ci
       - name: Install pdftotext for retained PDF evidence verification
-        run: sudo apt-get update && sudo apt-get install -y poppler-utils
+        shell: bash
+        run: |
+          set -euo pipefail
+          verify_pdftotext() {
+            local binary owner integrity package_version version_output version_line
+            binary="$(command -v pdftotext)" || return 1
+            [[ "$binary" == /usr/bin/pdftotext && -f "$binary" && ! -L "$binary" && -x "$binary" ]] || return 1
+            [[ "$(stat -c '%u:%g:%a' "$binary")" == '0:0:755' ]] || return 1
+            owner="$(dpkg-query -S "$binary")" || return 1
+            [[ "$owner" =~ ^poppler-utils(:[a-z0-9-]+)?:[[:space:]]/usr/bin/pdftotext$ ]] || return 1
+            [[ "$(dpkg-query -W -f='${Status}' poppler-utils)" == 'install ok installed' ]] || return 1
+            integrity="$(dpkg --verify poppler-utils)" || return 1
+            [[ -z "$integrity" ]] || return 1
+            package_version="$(dpkg-query -W -f='${Version}' poppler-utils)" || return 1
+            [[ -n "$package_version" ]] || return 1
+            version_output="$(timeout --kill-after=5s 10s "$binary" -v 2>&1)" || return 1
+            version_line="${version_output%%$'\n'*}"
+            [[ "$version_line" =~ ^pdftotext[[:space:]]version[[:space:]][0-9]+(\.[0-9]+){1,2}$ ]] || return 1
+            echo "Verified system pdftotext (poppler-utils ${package_version})"
+          }
+          if ! verify_pdftotext; then
+            # Change only the known Azure HTTP archive URI; suites and signing keys stay intact.
+            for apt_source in /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources; do
+              if [[ -f "$apt_source" && ! -L "$apt_source" ]]; then
+                sudo sed -E -i -e ':ubuntu_uri' -e 's#(^|[[:space:]])http://azure\.archive\.ubuntu\.com/ubuntu(/?)([[:space:]]|$)#\1https://archive.ubuntu.com/ubuntu\2\3#g' -e 't ubuntu_uri' "$apt_source"
+              fi
+            done
+            apt_options=(-o Acquire::Retries=2 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 -o APT::Update::Error-Mode=any -o Acquire::AllowInsecureRepositories=false -o Acquire::AllowDowngradeToInsecureRepositories=false -o APT::Get::AllowUnauthenticated=false)
+            sudo timeout --kill-after=15s 180s apt-get "${apt_options[@]}" update
+            sudo timeout --kill-after=15s 180s apt-get "${apt_options[@]}" install -y poppler-utils
+            verify_pdftotext || { echo 'Trusted system pdftotext is unavailable; PDF checks cannot continue.'; exit 1; }
+          fi
       - name: Check official source URLs
         shell: bash
         run: |
