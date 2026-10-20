@@ -39,6 +39,7 @@ const cases = [
   ['wrongDownloadSize', { downloadedSize: 1 }, 4],
   ['wrongFinalUrl', { finalUrl: 'https://burlingame.org/elsewhere' }, 4],
   ['unexpectedEncoding', { headersExtra: 'Content-Encoding: gzip\r\n' }, 4],
+  ['partialRange200', { headersExtra: 'Content-Range: bytes 0-99/1000\r\n' }, 4],
   ['multipleHeaderBlocks', { headerPrefix: 'HTTP/1.1 301 Moved Permanently\r\nLocation: https://burlingame.org/elsewhere\r\n\r\n' }, 4],
   ['oldCurlRefused', { curlVersion: '8.3.0' }, 5],
   ['existingAttemptRefused', { setup: 'existing-directory' }, 5],

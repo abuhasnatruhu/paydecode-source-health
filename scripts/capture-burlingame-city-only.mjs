@@ -123,6 +123,7 @@ try {
   if (!Number.isFinite(Number(downloadedSize)) || Number(downloadedSize) !== body.length) failures.push('download-size-mismatch');
   const headerBlocks = headers.toString('utf8').trim().split(/\r?\n\r?\n+/);
   if (headerBlocks.length !== 1 || !/^HTTP\/(?:1\.0|1\.1|2|3) 200(?:\s|$)/.test(headerBlocks[0])) failures.push('unexpected-or-incomplete-response-headers');
+  if (/^content-range:/im.test(headers.toString('utf8'))) failures.push('unexpected-content-range');
   const lengthHeaders = [...headers.toString('utf8').matchAll(/^content-length:\s*(\d+)\s*$/gim)];
   if (lengthHeaders.length > 1 || (lengthHeaders.length === 1 && Number(lengthHeaders[0][1]) !== body.length)) failures.push('content-length-mismatch');
   if (/^content-encoding:\s*(?!identity\s*$)\S+/im.test(headers.toString('utf8'))) failures.push('unexpected-compressed-body');
