@@ -57,6 +57,17 @@ jobs:
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '24.14.0'
+      - name: Provision and verify the required PDF parser for the fixed CB088 job
+        if: ${{ matrix.source_id == 'pg-cb-088' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y poppler-utils
+          command -v pdfinfo
+          command -v pdftotext
+          pdfinfo -v
+          pdftotext -v
       - name: Capture this fixed ID once with no fallback
         id: capture
         continue-on-error: true
@@ -111,6 +122,6 @@ jobs:
             echo "Fixed ID: $FIXED_SOURCE_ID"
             echo "Source SHA: $PAYDECODE_SOURCE_SHA"
             echo "capture=$CAPTURE_OUTCOME sign=$SIGN_OUTCOME verify=$VERIFY_OUTCOME upload=$UPLOAD_OUTCOME"
-            echo 'No archive fallback, retry, redirect follow, PR, review renewal, source-health clearance, mail or deployment.'
+            echo 'PDF job provisions Ubuntu poppler-utils. No archive fallback, retry, redirect follow, PR, review renewal, source-health clearance, mail or deployment.'
           } >> "$GITHUB_STEP_SUMMARY"
           [[ "$CAPTURE_OUTCOME" == success && "$SIGN_OUTCOME" == success && "$VERIFY_OUTCOME" == success && "$UPLOAD_OUTCOME" == success ]]

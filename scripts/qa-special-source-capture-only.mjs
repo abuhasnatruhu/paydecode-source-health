@@ -120,7 +120,10 @@ process.stdout.write([String(fixture.status),fixture.finalUrl,String(fixture.red
 const workflow=fs.readFileSync(path.join(root,WORKFLOW_PATH),'utf8');
 assert.match(workflow,/workflow_dispatch:\s*\n\s*permissions:/u);assert.match(workflow,/source_id: \[pg-cb-088, ne-archive, ne-lincoln, ne-omaha\]/u);assert.match(workflow,/fail-fast: false/u);
 assert.match(workflow,/ref: \$\{\{ github\.sha \}\}/u);assert.match(workflow,/PAYDECODE_SOURCE_SHA: a013cf5e55985ece73d6720c1fc76ff9f9d18d72/u);assert.match(workflow,/always\(\) && steps\.capture\.outputs\.capture_dir != ''/u);assert.match(workflow,/overwrite: false/u);assert.match(workflow,/persist-credentials: false/u);
-for(const forbidden of ['schedule:','pull_request:','push:','PAYDECODE_SOURCE_WRITE_TOKEN','GH_TOKEN','git push','gh pr','npm ci','capture-source-batch','capture-archive','contents: write','apt-get','pip install'])assert.equal(workflow.includes(forbidden),false,`No ${forbidden}`);
+assert.match(workflow,/if: \$\{\{ matrix\.source_id == 'pg-cb-088' \}\}/u);
+assert.match(workflow,/sudo apt-get install --no-install-recommends -y poppler-utils/u);
+assert.match(workflow,/command -v pdfinfo\s+command -v pdftotext\s+pdfinfo -v\s+pdftotext -v/u);
+for(const forbidden of ['schedule:','pull_request:','push:','PAYDECODE_SOURCE_WRITE_TOKEN','GH_TOKEN','git push','gh pr','npm ci','capture-source-batch','capture-archive','contents: write','pip install'])assert.equal(workflow.includes(forbidden),false,`No ${forbidden}`);
 for(const file of ['scripts/special-source-capture-only.mjs','scripts/lib/special-source-capture-only.mjs',WORKFLOW_PATH])assert.doesNotMatch(fs.readFileSync(path.join(root,file),'utf8'),/\b(?:unlinkSync|rmSync|rmdirSync)\s*\(|\brm\s+-/u);
 assert.deepEqual(SPECIAL_SOURCES.map(source=>source.id),['pg-cb-088','ne-archive','ne-lincoln','ne-omaha']);
 const sourceContract=fs.readFileSync(path.join(sourceRepository,'scripts/lib/legal-watch-renewals-20261011.mjs'),'utf8');for(const source of SPECIAL_SOURCES)assert.ok(sourceContract.includes(`'${source.url}'`),'Exact URLs remain those of the original legal-watch contract');
