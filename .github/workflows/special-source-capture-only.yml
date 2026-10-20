@@ -1,0 +1,116 @@
+name: Four fixed special-source captures only
+
+# Artifact collection only. No URL, ref, SHA, job ID or other dispatch input.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: special-source-capture-only-${{ github.run_id }}-${{ github.run_attempt }}
+  cancel-in-progress: false
+
+env:
+  SOURCE_REPOSITORY: abuhasnatruhu/paydecode.com
+  PAYDECODE_SOURCE_SHA: a013cf5e55985ece73d6720c1fc76ff9f9d18d72
+
+jobs:
+  capture:
+    if: ${{ github.repository == 'abuhasnatruhu/paydecode-source-health' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        source_id: [pg-cb-088, ne-archive, ne-lincoln, ne-omaha]
+    steps:
+      - name: Check out this reviewed workflow and fixed capture tool
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          path: health
+          persist-credentials: false
+      - name: Check out only the fixed trusted source and unchanged signer
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: ${{ env.SOURCE_REPOSITORY }}
+          ref: ${{ env.PAYDECODE_SOURCE_SHA }}
+          token: ${{ secrets.PAYDECODE_SOURCE_TOKEN1 }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify both exact checkouts before capture
+        shell: bash
+        env:
+          EXPECTED_HEALTH_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$(git -C health rev-parse HEAD)" == "$EXPECTED_HEALTH_SHA" ]]
+          [[ "$(git -C source rev-parse HEAD)" == "$PAYDECODE_SOURCE_SHA" ]]
+          [[ "$PAYDECODE_SOURCE_SHA" == a013cf5e55985ece73d6720c1fc76ff9f9d18d72 ]]
+          git -C health diff --quiet
+          git -C health diff --cached --quiet
+          git -C source diff --quiet
+          git -C source diff --cached --quiet
+      - name: Use the existing pinned Node runtime
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24.14.0'
+      - name: Capture this fixed ID once with no fallback
+        id: capture
+        continue-on-error: true
+        shell: bash
+        env:
+          FIXED_SOURCE_ID: ${{ matrix.source_id }}
+        run: node health/scripts/special-source-capture-only.mjs source "$FIXED_SOURCE_ID"
+      - name: Sign only a complete eligible capture with the existing signer
+        if: ${{ steps.capture.outcome == 'success' }}
+        id: sign
+        working-directory: source
+        shell: bash
+        env:
+          PAYDECODE_RECEIPT_SIGNING_KEY: ${{ secrets.PAYDECODE_RECEIPT_SIGNING_KEY }}
+          CAPTURE_DIRECTORY: ${{ steps.capture.outputs.capture_dir }}
+        run: |
+          set -euo pipefail
+          [[ -n "$PAYDECODE_RECEIPT_SIGNING_KEY" ]]
+          [[ -n "$CAPTURE_DIRECTORY" ]]
+          [[ "$(git rev-parse HEAD)" == "$PAYDECODE_SOURCE_SHA" ]]
+          git diff --quiet
+          git diff --cached --quiet
+          node scripts/sign-source-receipts.mjs "$CAPTURE_DIRECTORY"
+      - name: Verify signatures with the fixed source's unchanged gate
+        if: ${{ steps.capture.outcome == 'success' && steps.sign.outcome == 'success' }}
+        id: verify
+        working-directory: source
+        run: node scripts/qa-receipt-provenance.mjs
+      - name: Preserve this entire new attempt on success or failure
+        if: ${{ always() && steps.capture.outputs.capture_dir != '' }}
+        id: upload
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: special-source-only-${{ matrix.source_id }}-${{ github.run_id }}-attempt${{ github.run_attempt }}
+          path: source/${{ steps.capture.outputs.capture_dir }}
+          if-no-files-found: error
+          overwrite: false
+          retention-days: 30
+      - name: Report the actual result without source or release admission
+        if: ${{ always() }}
+        shell: bash
+        env:
+          FIXED_SOURCE_ID: ${{ matrix.source_id }}
+          CAPTURE_OUTCOME: ${{ steps.capture.outcome }}
+          SIGN_OUTCOME: ${{ steps.sign.outcome }}
+          VERIFY_OUTCOME: ${{ steps.verify.outcome }}
+          UPLOAD_OUTCOME: ${{ steps.upload.outcome }}
+        run: |
+          set -euo pipefail
+          {
+            echo '## Four fixed legal-watch sources: artifact-only job'
+            echo "Fixed ID: $FIXED_SOURCE_ID"
+            echo "Source SHA: $PAYDECODE_SOURCE_SHA"
+            echo "capture=$CAPTURE_OUTCOME sign=$SIGN_OUTCOME verify=$VERIFY_OUTCOME upload=$UPLOAD_OUTCOME"
+            echo 'No archive fallback, retry, redirect follow, PR, review renewal, source-health clearance, mail or deployment.'
+          } >> "$GITHUB_STEP_SUMMARY"
+          [[ "$CAPTURE_OUTCOME" == success && "$SIGN_OUTCOME" == success && "$VERIFY_OUTCOME" == success && "$UPLOAD_OUTCOME" == success ]]
