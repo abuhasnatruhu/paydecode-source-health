@@ -1,0 +1,125 @@
+name: Two fixed NM TX source captures only
+
+# Artifact collection only; no URL/ref/SHA/job-ID dispatch inputs.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nm-tx-source-capture-only-${{ github.run_id }}-${{ github.run_attempt }}
+  cancel-in-progress: false
+
+env:
+  SOURCE_REPOSITORY: abuhasnatruhu/paydecode.com
+  PAYDECODE_SOURCE_SHA: 46b5b5f7a75cb251ea2cabb587af95f5eda34bca
+
+jobs:
+  capture:
+    if: ${{ github.repository == 'abuhasnatruhu/paydecode-source-health' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        source_id: [nm-wage-hour, tx-minimum-wage]
+    steps:
+      - name: Check out the reviewed runner workflow and tool
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          path: health
+          persist-credentials: false
+      - name: Check out the exact existing source and unchanged signer
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: ${{ env.SOURCE_REPOSITORY }}
+          ref: ${{ env.PAYDECODE_SOURCE_SHA }}
+          token: ${{ secrets.PAYDECODE_SOURCE_TOKEN1 }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify both checkouts and unchanged signer pins before any request
+        shell: bash
+        env:
+          EXPECTED_HEALTH_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$(git --no-replace-objects -C health rev-parse HEAD)" == "$EXPECTED_HEALTH_SHA" ]]
+          [[ "$(git --no-replace-objects -C source rev-parse HEAD)" == "$PAYDECODE_SOURCE_SHA" ]]
+          [[ "$PAYDECODE_SOURCE_SHA" == 46b5b5f7a75cb251ea2cabb587af95f5eda34bca ]]
+          git -C health diff --quiet
+          git -C health diff --cached --quiet
+          git -C source diff --quiet
+          git -C source diff --cached --quiet
+          cd source
+          printf '%s\n' \
+            '2e84076661a2382b2c277ba76c2dcd262d28972760804594339fe9b5441f2df5  scripts/sign-source-receipts.mjs' \
+            'f66c56b4744a762fe2ef75cacfe97fa8d5dbd7ffce48c55a1b9aafd7a142411a  scripts/lib/receipt-signature.mjs' \
+            '3b63308793c627ae29a972dbd188708d43afbacc221e2dadd1e2bccf0ff719c9  scripts/lib/receipt-signing-public-key.pem' \
+            '8e5e7d259a5ed672c84a5281c97094345f480ba7eaa4d8c21755fa007bfd9ecb  scripts/qa-receipt-provenance.mjs' \
+            | sha256sum --check --strict -
+      - name: Use the existing pinned Node runtime
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24.14.0'
+      - name: Run network-free capture-tool negative controls
+        run: node health/scripts/qa-nm-tx-source-capture-only.mjs
+      - name: Capture this fixed source once without fallback
+        id: capture
+        continue-on-error: true
+        shell: bash
+        env:
+          FIXED_SOURCE_ID: ${{ matrix.source_id }}
+        run: node health/scripts/capture-nm-tx-source-only.mjs source "$FIXED_SOURCE_ID"
+      - name: Sign only a complete eligible capture using the existing signer
+        if: ${{ steps.capture.outcome == 'success' }}
+        id: sign
+        working-directory: source
+        shell: bash
+        env:
+          PAYDECODE_RECEIPT_SIGNING_KEY: ${{ secrets.PAYDECODE_RECEIPT_SIGNING_KEY }}
+          CAPTURE_DIRECTORY: ${{ steps.capture.outputs.capture_dir }}
+        run: |
+          set -euo pipefail
+          [[ -n "$PAYDECODE_RECEIPT_SIGNING_KEY" && -n "$CAPTURE_DIRECTORY" ]]
+          [[ "$(git --no-replace-objects rev-parse HEAD)" == "$PAYDECODE_SOURCE_SHA" ]]
+          git diff --quiet
+          git diff --cached --quiet
+          node scripts/sign-source-receipts.mjs "$CAPTURE_DIRECTORY"
+      - name: Verify signatures with the unchanged provenance gate
+        if: ${{ steps.capture.outcome == 'success' && steps.sign.outcome == 'success' }}
+        id: verify
+        working-directory: source
+        run: node scripts/qa-receipt-provenance.mjs
+      - name: Preserve all new success or failure evidence
+        if: ${{ always() && steps.capture.outputs.capture_dir != '' }}
+        id: upload
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: nm-tx-source-only-${{ matrix.source_id }}-${{ github.run_id }}-attempt${{ github.run_attempt }}
+          path: source/${{ steps.capture.outputs.capture_dir }}
+          if-no-files-found: error
+          overwrite: false
+          retention-days: 30
+      - name: Report transport outcome without admission or release
+        if: ${{ always() }}
+        shell: bash
+        env:
+          FIXED_SOURCE_ID: ${{ matrix.source_id }}
+          CAPTURE_OUTCOME: ${{ steps.capture.outcome }}
+          SIGN_OUTCOME: ${{ steps.sign.outcome }}
+          VERIFY_OUTCOME: ${{ steps.verify.outcome }}
+          UPLOAD_OUTCOME: ${{ steps.upload.outcome }}
+        run: |
+          set -euo pipefail
+          {
+            echo '## Fixed NM/TX artifact-only source capture'
+            echo "Fixed ID: $FIXED_SOURCE_ID"
+            echo "Source SHA: $PAYDECODE_SOURCE_SHA"
+            echo "capture=$CAPTURE_OUTCOME sign=$SIGN_OUTCOME verify=$VERIFY_OUTCOME upload=$UPLOAD_OUTCOME"
+            echo 'One ordinary full GET per URL. No redirects, retries, proxy, cookies, Range, archive, challenge workaround, PR, review renewal, source-health clearance, mail or deployment.'
+            echo 'Original bodies and sanitized header projections are retained; raw response headers and raw stderr are not written or logged.'
+          } >> "$GITHUB_STEP_SUMMARY"
+          [[ "$CAPTURE_OUTCOME" == success && "$SIGN_OUTCOME" == success && "$VERIFY_OUTCOME" == success && "$UPLOAD_OUTCOME" == success ]]
