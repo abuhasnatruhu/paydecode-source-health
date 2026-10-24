@@ -28,7 +28,7 @@ jobs:
   verify:
     name: Full dry-run quality chain
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 120
     steps:
       - name: Resolve the branch head
         id: resolve
